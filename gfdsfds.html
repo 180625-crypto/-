@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Chromebook Fix</title>
+<title>Mini Craft - 4 Features Added</title>
 <style>
     body { margin: 0; overflow: hidden; background: #87ceeb; font-family: sans-serif; user-select: none; }
     
@@ -20,6 +20,9 @@
     #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: white; font-size: 24px; }
     #serverInfo { position: absolute; top: 20px; left: 20px; font-size: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; pointer-events: auto; }
     
+    /* ★体力ゲージのUIを追加 */
+    #stats { position: absolute; top: 70px; left: 20px; font-size: 28px; text-shadow: 2px 2px 0 #000; pointer-events: none; }
+
     /* 持ち物バー */
     #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; }
     .slot { width: 50px; height: 50px; border: 2px solid #555; margin: 0 3px; display: flex; justify-content: center; align-items: center; }
@@ -27,17 +30,13 @@
 </style>
 
 <script>
-// --- 最優先で実行される画面切り替え処理 ---
 function onStartClicked(mode) {
-    // 1. 問答無用で画面を切り替える
     document.getElementById('netUI').style.display = 'none';
     document.getElementById('gameUI').style.display = 'block';
     const info = document.getElementById('serverInfo');
     info.innerText = "3Dエンジンを読み込み中...";
 
-    // 2. 外部スクリプトを後から読み込む
     loadScript("https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js", () => {
-        // Three.js成功後、PeerJSを読み込む
         loadScript("https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js", () => {
             info.innerText = "読み込み完了！世界を構築中...";
             setTimeout(() => startCoreGame(mode), 100);
@@ -46,12 +45,10 @@ function onStartClicked(mode) {
             setTimeout(() => startCoreGame(mode), 100);
         });
     }, () => {
-        // 失敗した場合
-        info.innerHTML = "<span style='color:#ff4b4b;'>エラー: 3Dライブラリがブロックされました。</span><br>学校のWi-Fiなどのセキュリティ制限が原因の可能性が高いです。";
+        info.innerHTML = "<span style='color:#ff4b4b;'>エラー: 3Dライブラリがブロックされました。</span>";
     });
 }
 
-// スクリプト読み込み用ツール
 function loadScript(url, onSuccess, onError) {
     const script = document.createElement('script');
     script.src = url;
@@ -60,7 +57,6 @@ function loadScript(url, onSuccess, onError) {
     document.head.appendChild(script);
 }
 
-// --- ゲーム本体の処理 ---
 function startCoreGame(mode) {
     let scene, camera, renderer, raycaster;
     let blocks = new Map(), selected = 0;
@@ -68,10 +64,13 @@ function startCoreGame(mode) {
     const mats = {};
 
     const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
-    let py = 5, vy = 0, targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
+    let py = 10, vy = 0, targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
     let isLocked = false;
     const keys = {};
     let peer = null, isHost = false, connections = {};
+    
+    // ★体力管理
+    let hp = 5;
 
     // Three.js初期化
     scene = new THREE.Scene();
@@ -99,151 +98,4 @@ function startCoreGame(mode) {
             if (blocks.get(k).type === 'water' && type !== 'water') removeBlock(x, y, z, false);
             else return;
         }
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats[type]);
-        mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
-        scene.add(mesh);
-        blocks.set(k, { mesh, type });
-        if (isLocal) broadcast({ type: 'add', x, y, z, blockType: type });
-    }
-
-    function removeBlock(x, y, z, isLocal = true) {
-        const k = x+","+y+","+z;
-        if (!blocks.has(k) || blocks.get(k).type === 'water' || y === -3) return;
-        scene.remove(blocks.get(k).mesh);
-        blocks.delete(k);
-        if (isLocal) broadcast({ type: 'break', x, y, z });
-    }
-
-    for(let x=-10; x<=10; x++) for(let z=-10; z<=10; z++) {
-        addBlock(x, -1, z, "grass", false);
-        addBlock(x, -2, z, "dirt", false);
-        addBlock(x, -3, z, "bedrock", false);
-    }
-
-    window.addEventListener('keydown', e => {
-        keys[e.code] = true;
-        if (e.code.startsWith("Digit")) {
-            document.getElementById("s"+selected).classList.remove("active");
-            selected = Math.min(parseInt(e.code.slice(-1)) - 1, 4);
-            document.getElementById("s"+selected).classList.add("active");
-        }
-    });
-    window.addEventListener('keyup', e => keys[e.code] = false);
-
-    renderer.domElement.addEventListener('mousedown', () => renderer.domElement.requestPointerLock());
-    document.addEventListener('pointerlockchange', () => isLocked = document.pointerLockElement === renderer.domElement);
-    window.addEventListener('mousemove', e => {
-        if (!isLocked) return;
-        targetYaw -= e.movementX * 0.002;
-        targetPitch = Math.max(-1.5, Math.min(1.5, targetPitch - e.movementY * 0.002));
-    });
-
-    window.addEventListener('mousedown', e => {
-        if (!isLocked) return;
-        raycaster.setFromCamera({x:0, y:0}, camera);
-        const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
-        if (hits.length > 0 && hits[0].distance < 8) {
-            const pos = hits[0].object.position;
-            if (e.button === 0) removeBlock(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
-            if (e.button === 2) {
-                const n = hits[0].face.normal;
-                addBlock(Math.floor(pos.x + n.x), Math.floor(pos.y + n.y), Math.floor(pos.z + n.z), items[selected]);
-            }
-        }
-    });
-
-    const infoDisp = document.getElementById("serverInfo");
-    if (typeof Peer !== 'undefined') {
-        if (mode === 'host') {
-            const id = Math.floor(1000 + Math.random() * 9000).toString();
-            peer = new Peer(id);
-            peer.on('open', (id) => { isHost = true; infoDisp.innerText = "あなたのID: " + id; });
-            peer.on('connection', conn => {
-                conn.on('open', () => {
-                    connections[conn.peer] = conn;
-                    let worldData = [];
-                    blocks.forEach((v, k) => { const parts = k.split(','); worldData.push({x:parseInt(parts[0]), y:parseInt(parts[1]), z:parseInt(parts[2]), type:v.type}); });
-                    conn.send({ type: 'world', world: worldData });
-                });
-                conn.on('data', data => handleNetworkData(data, conn.peer));
-            });
-        } else {
-            const targetId = document.getElementById("hostIdInput").value;
-            peer = new Peer();
-            infoDisp.innerText = "接続中...";
-            peer.on('open', () => {
-                const conn = peer.connect(targetId);
-                conn.on('open', () => { connections[targetId] = conn; infoDisp.innerText = "参加成功！"; });
-                conn.on('data', data => handleNetworkData(data, targetId));
-            });
-        }
-    }
-
-    function broadcast(data) {
-        if (!peer) return;
-        if (isHost) { for (let id in connections) connections[id].send(data); }
-        else { Object.values(connections)[0]?.send(data); }
-    }
-
-    function handleNetworkData(data, senderId) {
-        if (data.type === 'world') data.world.forEach(b => addBlock(b.x, b.y, b.z, b.type, false));
-        else if (data.type === 'add') { addBlock(data.x, data.y, data.z, data.blockType, false); if (isHost) broadcast(data); }
-        else if (data.type === 'break') { removeBlock(data.x, data.y, data.z, false); if (isHost) broadcast(data); }
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        if (isLocked) {
-            curYaw += (targetYaw - curYaw) * 0.2;
-            curPitch += (targetPitch - curPitch) * 0.2;
-            camera.rotation.set(curPitch, curYaw, 0, 'YXZ');
-
-            const dt = 0.016, move = new THREE.Vector3();
-            if (keys["KeyW"]) move.z -= 1; if (keys["KeyS"]) move.z += 1;
-            if (keys["KeyA"]) move.x -= 1; if (keys["KeyD"]) move.x += 1;
-            move.applyAxisAngle(new THREE.Vector3(0,1,0), curYaw).normalize().multiplyScalar(MOVE_SPEED * dt);
-            
-            if(!blocks.get(Math.floor(camera.position.x + move.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z))) camera.position.x += move.x;
-            if(!blocks.get(Math.floor(camera.position.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z + move.z))) camera.position.z += move.z;
-
-            vy += GRAVITY * dt; py += vy * dt;
-            const ground = blocks.get(Math.floor(camera.position.x)+","+Math.floor(py-PLAYER_H)+","+Math.floor(camera.position.z));
-            if (ground && ground.type !== 'water') {
-                py = Math.floor(py-PLAYER_H) + 1 + PLAYER_H;
-                vy = keys["Space"] ? JUMP : 0;
-            }
-            camera.position.y = py;
-        }
-        renderer.render(scene, camera);
-    }
-    animate();
-}
-</script>
-</head>
-<body>
-
-<div id="netUI">
-    <div id="menuContent">
-        <h1>Mini Craft</h1>
-        <input id="userName" type="text" placeholder="あなたの名前">
-        <button class="btn btn-host" onclick="onStartClicked('host')">世界を作成して開始</button>
-        <hr style="border-color:#555; margin: 20px 0;">
-        <input id="hostIdInput" type="text" placeholder="参加用4桁のIDを入力">
-        <button class="btn btn-join" onclick="onStartClicked('join')">友達の世界に参加する</button>
-    </div>
-</div>
-
-<div id="gameUI">
-    <div id="serverInfo">ボタンを押してください</div>
-    <div id="crosshair">+</div>
-    <div id="hotbar">
-        <div class="slot active" id="s0"><div style="width:30px;height:30px;background:#4caf50"></div></div>
-        <div class="slot" id="s1"><div style="width:30px;height:30px;background:#8b5a2b"></div></div>
-        <div class="slot" id="s2"><div style="width:30px;height:30px;background:#888888"></div></div>
-        <div class="slot" id="s3"><div style="width:30px;height:30px;background:rgba(33,150,243,0.6)"></div></div>
-        <div class="slot" id="s4"><div style="width:30px;height:30px;background:#333"></div></div>
-    </div>
-</div>
-
-</body>
-</html>
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(
