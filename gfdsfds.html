@@ -1,10 +1,9 @@
 <!DOCTYPE html>
-<html>
+<html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>マイクラ・ライト</title>
+<title>Mini Craft - Ultimate Smooth</title>
 <style>
-/* スタイルはほぼ維持、軽量化のため余計なエフェクトをカット */
 body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
 #crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:24px;pointer-events:none;z-index:10;}
 #netUI{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);display:flex;justify-content:center;align-items:center;z-index:200;color:white;}
@@ -12,249 +11,60 @@ body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
 .large-btn{font-size:18px;padding:10px;margin:5px 0;cursor:pointer;background:#4caf50;color:white;border:none;width:100%;border-radius:5px;}
 #gameUI{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:none;z-index:100;}
 #hotbar{display:flex;background:rgba(0,0,0,0.5);padding:2px;border:2px solid #333;}
-.slot{width:40px;height:40px;border:2px solid #555;display:flex;justify-content:center;align-items:center;position:relative;}
+.slot{width:40px;height:40px;border:2px solid #555;display:flex;justify-content:center;align-items:center;}
 .slot.active{border-color:white;background:rgba(255,255,255,0.3);}
 .icon{width:20px;height:20px;}
-#log{position:fixed;bottom:10px;left:10px;color:white;font-size:12px;background:rgba(0,0,0,0.5);pointer-events:none;}
-#progressBarContainer{position:fixed;bottom:120px;left:50%;transform:translateX(-50%);width:150px;height:5px;background:#000;display:none;}
-#progressBar{width:0%;height:100%;background:#ffcc00;}
 </style>
 </head>
 <body>
 
 <div id="netUI">
-  <div id="menuContent">
-    <h1 style="color:#4caf50">Mini Craft</h1>
-    <input id="userNameInput" placeholder="名前" style="padding:10px;width:80%;margin-bottom:10px;">
-    <button class="large-btn" onclick="startHost()">ホストとして開始</button>
-    <input id="hostIdInput" placeholder="4桁のIDを入力" style="padding:10px;width:80%;margin-top:10px;">
-    <button class="large-btn" style="background:#2196f3" onclick="joinHost()">参加する</button>
-  </div>
+  <div id="menuContent">
+    <h1 style="color:#4caf50">Mini Craft Pro</h1>
+    <button class="large-btn" onclick="startHost()">ホストとして開始</button>
+    <input id="hostIdInput" placeholder="4桁のIDを入力" style="padding:10px;width:80%;margin-top:10px;">
+    <button class="large-btn" style="background:#2196f3" onclick="joinHost()">参加する</button>
+  </div>
 </div>
 
 <div id="crosshair">+</div>
 <div id="gameUI">
-  <div id="hotbar">
-    <div class="slot active" id="slot0"><div class="icon" style="background:#4caf50"></div></div>
-    <div class="slot" id="slot1"><div class="icon" style="background:#8b5a2b"></div></div>
-    <div class="slot" id="slot2"><div class="icon" style="background:#888888"></div></div>
-    <div class="slot" id="slot3"><div class="icon" style="background:#2196f3;opacity:0.6"></div></div>
-    <div class="slot" id="slot4"><div class="icon" style="background:#ddd"></div></div>
-  </div>
+  <div id="hotbar">
+    <div class="slot active" id="slot0"><div class="icon" style="background:#4caf50"></div></div>
+    <div class="slot" id="slot1"><div class="icon" style="background:#8b5a2b"></div></div>
+    <div class="slot" id="slot2"><div class="icon" style="background:#888888"></div></div>
+    <div class="slot" id="slot3"><div class="icon" style="background:#2196f3;opacity:0.6"></div></div>
+    <div class="slot" id="slot4"><div class="icon" style="background:#444"></div></div>
+  </div>
 </div>
-<div id="progressBarContainer"><div id="progressBar"></div></div>
-<div id="log"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- 定数 & 設定 ---
-const PLAYER_H = 1.6, GRAVITY = -15, JUMP = 6, MOVE_SPEED = 5, REACH = 5;
-let selectedSlot = 0, isInfinite = true, myHealth = 10;
-const inventory = ["grass", "dirt", "stone", "water", "pickaxe"];
-const blockHardness = { grass:1, dirt:1, stone:3, water:0.1, bedrock:Infinity };
+// --- 定数 ---
+const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6, REACH = 8;
+let selectedSlot = 0, blocks = new Map(), peer, isHost = false, connections = {};
+const inventory = ["grass", "dirt", "stone", "water", "bedrock"];
 
-// --- Three.js セットアップ (軽量設定) ---
+// --- Three.js セットアップ ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 500);
-const renderer = new THREE.WebGLRenderer({ antialias: false }); // 軽量化のためアンチエイリアスOFFも可
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
+// ライティング
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(5, 15, 7);
+scene.add(sun);
+
 const mats = {
-  grass: new THREE.MeshLambertMaterial({ color: 0x4caf50 }),
-  dirt: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
-  stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
-  water: new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 }),
-  bedrock: new THREE.MeshLambertMaterial({ color: 0x222222 })
-};
-
-const blocks = new Map();
-const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-
-function addBlock(x, y, z, type, send=true) {
-  const k = `${x},${y},${z}`;
-  if (blocks.has(k)) return;
-  const mesh = new THREE.Mesh(boxGeo, mats[type]);
-  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
-  scene.add(mesh);
-  blocks.set(k, { mesh, type });
-  if (send && peer) {
-    const d = { type: "add", x, y, z, blockType: type };
-    isHost ? sendToAll(d) : sendToHost(d);
-  }
-}
-
-function removeBlock(x, y, z, send=true) {
-  const k = `${x},${y},${z}`;
-  if (!blocks.has(k)) return;
-  scene.remove(blocks.get(k).mesh);
-  blocks.delete(k);
-  if (send && peer) {
-    const d = { type: "break", x, y, z };
-    isHost ? sendToAll(d) : sendToHost(d);
-  }
-}
-
-// --- 当たり判定 (水の通り抜け対応) ---
-function checkCollision(x, y, z) {
-  const ix = Math.floor(x), iz = Math.floor(z);
-  const foot = blocks.get(`${ix},${Math.floor(y - PLAYER_H + 0.1)},${iz}`);
-  const head = blocks.get(`${ix},${Math.floor(y - 0.1)},${iz}`);
-  
-  const hitBlock = (foot && foot.type !== 'water') || (head && head.type !== 'water');
-  return hitBlock;
-}
-
-// --- 通信関連 ---
-let peer, isHost = false, connections = {}, myId;
-
-function startHost() {
-  const id = Math.floor(1000 + Math.random() * 9000).toString();
-  peer = new Peer(id);
-  peer.on('open', (id) => {
-    isHost = true; myId = id;
-    alert("サーバーID: " + id);
-    setupGame();
-    for(let x=-5; x<5; x++) for(let z=-5; z<5; z++) addBlock(x, -1, z, "grass", false);
-  });
-  peer.on('connection', conn => {
-    conn.on('open', () => {
-      connections[conn.peer] = conn;
-      const world = []; blocks.forEach((v,k) => { const [x,y,z]=k.split(',').map(Number); world.push({x,y,z,type:v.type}); });
-      conn.send({ type: "world", world });
-    });
-    conn.on('data', data => handleData(data, conn.peer));
-  });
-}
-
-function joinHost() {
-  const hostId = document.getElementById("hostIdInput").value;
-  peer = new Peer();
-  peer.on('open', id => {
-    myId = id;
-    const conn = peer.connect(hostId);
-    conn.on('open', () => { connections[hostId] = conn; setupGame(); });
-    conn.on('data', data => handleData(data, hostId));
-  });
-}
-
-function handleData(data, sender) {
-  if (data.type === "world") {
-    data.world.forEach(b => addBlock(b.x, b.y, b.z, b.type, false));
-  } else if (data.type === "add") {
-    addBlock(data.x, data.y, data.z, data.blockType, false);
-    if(isHost) sendToAll(data, sender);
-  } else if (data.type === "break") {
-    removeBlock(data.x, data.y, data.z, false);
-    if(isHost) sendToAll(data, sender);
-  }
-}
-
-function sendToAll(d, skip) { for(let id in connections) if(id !== skip) connections[id].send(d); }
-function sendToHost(d) { Object.values(connections)[0]?.send(d); }
-
-// --- ゲームループ ---
-let py = 5, vy = 0, yaw = 0, pitch = 0, locked = false;
-const keys = {}, raycaster = new THREE.Raycaster();
-
-function setupGame() {
-  document.getElementById("netUI").style.display = "none";
-  document.getElementById("gameUI").style.display = "block";
-  camera.position.set(0, py, 0);
-  
-  document.addEventListener('keydown', e => { 
-    keys[e.code] = true; 
-    if(e.code.startsWith("Digit")) {
-      document.getElementById("slot"+selectedSlot).classList.remove("active");
-      selectedSlot = parseInt(e.code.slice(-1)) - 1;
-      if(selectedSlot < 0 || selectedSlot > 4) selectedSlot = 0;
-      document.getElementById("slot"+selectedSlot).classList.add("active");
-    }
-  });
-  document.addEventListener('keyup', e => keys[e.code] = false);
-  document.body.onclick = () => renderer.domElement.requestPointerLock();
-  document.addEventListener('pointerlockchange', () => locked = document.pointerLockElement === renderer.domElement);
-  document.addEventListener('mousemove', e => {
-    if(!locked) return;
-    yaw -= e.movementX * 0.002; pitch -= e.movementY * 0.002;
-    pitch = Math.max(-1.5, Math.min(1.5, pitch));
-    camera.rotation.set(pitch, yaw, 0, 'YXZ');
-  });
-  
-  document.addEventListener('mousedown', e => {
-    if(!locked) return;
-    if(e.button === 0) tryBreak();
-    if(e.button === 2) tryPlace();
-  });
-
-  animate();
-}
-
-function tryBreak() {
-  raycaster.setFromCamera({x:0, y:0}, camera);
-  const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
-  if(hits.length > 0 && hits[0].distance < REACH) {
-    const b = hits[0].object.position;
-    removeBlock(Math.floor(b.x), Math.floor(b.y), Math.floor(b.z));
-  }
-}
-
-function tryPlace() {
-  const type = inventory[selectedSlot];
-  if(type === "pickaxe") return;
-  raycaster.setFromCamera({x:0, y:0}, camera);
-  const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
-  if(hits.length > 0 && hits[0].distance < REACH) {
-    const pos = hits[0].object.position.clone().add(hits[0].face.normal);
-    addBlock(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z), type);
-  }
-}
-
-function animate() {
-  requestAnimationFrame(animate);
-  const delta = 0.016; // 簡易的に固定フレームレート計算
-
-  if(locked) {
-    // 水中判定
-    const inWater = blocks.get(`${Math.floor(camera.position.x)},${Math.floor(py-PLAYER_H/2)},${Math.floor(camera.position.z)}`)?.type === 'water';
-    const curGravity = inWater ? GRAVITY * 0.2 : GRAVITY;
-    const curSpeed = inWater ? MOVE_SPEED * 0.5 : MOVE_SPEED;
-
-    // 移動
-    const dir = new THREE.Vector3();
-    if(keys["KeyW"]) dir.z -= 1; if(keys["KeyS"]) dir.z += 1;
-    if(keys["KeyA"]) dir.x -= 1; if(keys["KeyD"]) dir.x += 1;
-    dir.applyAxisAngle(new THREE.Vector3(0,1,0), yaw).normalize().multiplyScalar(curSpeed * delta);
-    
-    if(!checkCollision(camera.position.x + dir.x, py, camera.position.z)) camera.position.x += dir.x;
-    if(!checkCollision(camera.position.x, py, camera.position.z + dir.z)) camera.position.z += dir.z;
-
-    // ジャンプ・重力
-    vy += curGravity * delta;
-    py += vy * delta;
-    if(checkCollision(camera.position.x, py, camera.position.z)) {
-      if(vy < 0) {
-        py = Math.floor(py - PLAYER_H + 0.1) + 1 + PLAYER_H;
-        vy = 0;
-        if(keys["Space"]) vy = inWater ? JUMP * 0.5 : JUMP;
-      } else {
-        vy = 0;
-      }
-    }
-    camera.position.y = py;
-  }
-  
-  renderer.render(scene, camera);
-}
-
-window.onresize = () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-};
-</script>
-</body>
-</html>
+  grass: new THREE.MeshLambertMaterial({ color: 0x4caf50 }),
+  dirt: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
+  stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
+  water: new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 }),
+  bedrock: new THREE.MeshLambertMaterial({ color:
