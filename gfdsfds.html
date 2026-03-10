@@ -2,10 +2,13 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Fixed UI Transition</title>
+<title>Mini Craft - Ultimate Fix</title>
 <style>
     body { margin: 0; overflow: hidden; background: #87ceeb; font-family: sans-serif; user-select: none; }
     
+    /* エラー表示用（普段は隠れています） */
+    #errorLog { position: fixed; top: 0; left: 0; width: 100%; background: rgba(255, 0, 0, 0.9); color: white; padding: 10px; z-index: 10000; display: none; font-weight: bold; white-space: pre-wrap; }
+
     /* メニュー画面 */
     #netUI { position: fixed; inset: 0; background: rgba(0,0,0,0.9); display: flex; justify-content: center; align-items: center; z-index: 9999; }
     #menuContent { background: #333; padding: 40px; border-radius: 10px; text-align: center; width: 320px; border: 2px solid #4caf50; }
@@ -20,24 +23,26 @@
     /* ゲーム画面UI */
     #gameUI { position: fixed; inset: 0; pointer-events: none; display: none; }
     #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: white; font-size: 24px; }
-    #serverInfo { position: absolute; top: 20px; left: 20px; font-size: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; pointer-events: auto; }
+    #serverInfo { position: absolute; top: 20px; left: 20px; font-size: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; }
     
     /* 持ち物バー */
-    #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; pointer-events: auto; }
+    #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; }
     .slot { width: 50px; height: 50px; border: 2px solid #555; margin: 0 3px; display: flex; justify-content: center; align-items: center; }
     .slot.active { border-color: white; background: rgba(255,255,255,0.3); }
 </style>
 </head>
 <body>
 
+<div id="errorLog"></div>
+
 <div id="netUI">
     <div id="menuContent">
         <h1>Mini Craft</h1>
         <input id="userName" type="text" placeholder="あなたの名前">
-        <button class="btn btn-host" onclick="startGame('host')">世界を作成して開始</button>
+        <button id="btnHost" class="btn btn-host">世界を作成して開始</button>
         <hr style="border-color:#555; margin: 20px 0;">
         <input id="hostIdInput" type="text" placeholder="参加用4桁のIDを入力">
-        <button class="btn btn-join" onclick="startGame('join')">友達の世界に参加する</button>
+        <button id="btnJoin" class="btn btn-join">友達の世界に参加する</button>
     </div>
 </div>
 
@@ -53,54 +58,222 @@
     </div>
 </div>
 
+<script>
+window.onerror = function(msg, url, line) {
+    const errDiv = document.getElementById('errorLog');
+    errDiv.style.display = 'block';
+    errDiv.innerText += "エラー発生: " + msg + " (行: " + line + ")\n";
+    return false;
+};
+</script>
+
 <script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- グローバル変数 ---
-let scene, camera, renderer, raycaster;
-let blocks = new Map();
-let selected = 0;
-const items = ["grass", "dirt", "stone", "water", "bedrock"];
-const mats = {};
+// --- ボタンのイベント登録（HTMLではなくここで確実に紐付ける） ---
+document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('btnHost').addEventListener('click', () => {
+        switchScreen('host');
+    });
+    
+    document.getElementById('btnJoin').addEventListener('click', () => {
+        switchScreen('join');
+    });
+});
 
-const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
-let py = 5, vy = 0;
-let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
-let isLocked = false;
-const keys = {};
+// --- 最優先で画面を切り替える関数 ---
+function switchScreen(mode) {
+    // 1. UIの表示を切り替え
+    document.getElementById('netUI').style.display = 'none';
+    document.getElementById('gameUI').style.display = 'block';
 
-let peer = null, isHost = false, connections = {};
-
-// --- ゲーム開始（ボタンが押されたらここが呼ばれる） ---
-function startGame(mode) {
-    try {
-        // 1. 【最優先】何があってもまずは画面を切り替える
-        document.getElementById("netUI").style.display = "none";
-        document.getElementById("gameUI").style.display = "block";
-
-        // 2. Three.js が読み込めているかチェック
-        if (typeof THREE === 'undefined') {
-            alert("エラー: 3Dライブラリ(Three.js)が読み込めませんでした。ネット接続を確認してください。");
-            return;
-        }
-
-        // 3. 少しだけ遅らせてから重い3D処理を開始する（画面のフリーズを防ぐため）
-        setTimeout(() => {
-            init3D();
-            generateWorld();
-            initControls();
-            initNetwork(mode);
-            animate();
-        }, 50);
-
-    } catch (e) {
-        alert("エラーが発生しました: " + e.message);
-        console.error(e);
-    }
+    // 2. 0.1秒後に重いゲーム処理を開始（画面切り替えを邪魔させないため）
+    setTimeout(() => {
+        startCoreGame(mode);
+    }, 100);
 }
 
-// --- 3Dエンジンの初期化 ---
-function init3D() {
+// --- 以下、ゲームのコア処理 ---
+function startCoreGame(mode) {
+    let scene, camera, renderer, raycaster;
+    let blocks = new Map();
+    let selected = 0;
+    const items = ["grass", "dirt", "stone", "water", "bedrock"];
+    const mats = {};
+
+    const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
+    let py = 5, vy = 0;
+    let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
+    let isLocked = false;
+    const keys = {};
+
+    let peer = null, isHost = false, connections = {};
+
+    // Three.js 初期化
     scene = new THREE.Scene();
-    scene.
+    scene.background = new THREE.Color(0x87ceeb);
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+    const sun = new THREE.DirectionalLight(0xffffff, 0.5);
+    sun.position.set(5, 15, 7);
+    scene.add(sun);
+
+    mats.grass = new THREE.MeshLambertMaterial({ color: 0x4caf50 });
+    mats.dirt = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
+    mats.stone = new THREE.MeshLambertMaterial({ color: 0x888888 });
+    mats.water = new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 });
+    mats.bedrock = new THREE.MeshLambertMaterial({ color: 0x333333 });
+    
+    raycaster = new THREE.Raycaster();
+
+    // ブロック操作関数
+    function addBlock(x, y, z, type, isLocal = true) {
+        const k = x+","+y+","+z;
+        if (blocks.has(k)) {
+            if (blocks.get(k).type === 'water' && type !== 'water') removeBlock(x, y, z, false);
+            else return;
+        }
+        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats[type]);
+        mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+        scene.add(mesh);
+        blocks.set(k, { mesh, type });
+        if (isLocal) broadcast({ type: 'add', x, y, z, blockType: type });
+    }
+
+    function removeBlock(x, y, z, isLocal = true) {
+        const k = x+","+y+","+z;
+        if (!blocks.has(k) || blocks.get(k).type === 'water' || y === -3) return;
+        scene.remove(blocks.get(k).mesh);
+        blocks.delete(k);
+        if (isLocal) broadcast({ type: 'break', x, y, z });
+    }
+
+    // 地面生成
+    for(let x=-10; x<=10; x++) {
+        for(let z=-10; z<=10; z++) {
+            addBlock(x, -1, z, "grass", false);
+            addBlock(x, -2, z, "dirt", false);
+            addBlock(x, -3, z, "bedrock", false);
+        }
+    }
+
+    // 操作設定
+    window.addEventListener('keydown', e => {
+        keys[e.code] = true;
+        if (e.code.startsWith("Digit")) {
+            document.getElementById("s"+selected).classList.remove("active");
+            selected = Math.min(parseInt(e.code.slice(-1)) - 1, 4);
+            document.getElementById("s"+selected).classList.add("active");
+        }
+    });
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    renderer.domElement.addEventListener('mousedown', () => {
+        renderer.domElement.requestPointerLock();
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+        isLocked = document.pointerLockElement === renderer.domElement;
+    });
+
+    window.addEventListener('mousemove', e => {
+        if (!isLocked) return;
+        targetYaw -= e.movementX * 0.002;
+        targetPitch = Math.max(-1.5, Math.min(1.5, targetPitch - e.movementY * 0.002));
+    });
+
+    window.addEventListener('mousedown', e => {
+        if (!isLocked) return;
+        raycaster.setFromCamera({x:0, y:0}, camera);
+        const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
+        if (hits.length > 0 && hits[0].distance < 8) {
+            const pos = hits[0].object.position;
+            if (e.button === 0) removeBlock(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
+            if (e.button === 2) {
+                const n = hits[0].face.normal;
+                addBlock(Math.floor(pos.x + n.x), Math.floor(pos.y + n.y), Math.floor(pos.z + n.z), items[selected]);
+            }
+        }
+    });
+
+    // 通信設定
+    const infoDisp = document.getElementById("serverInfo");
+    if (typeof Peer !== 'undefined') {
+        if (mode === 'host') {
+            const id = Math.floor(1000 + Math.random() * 9000).toString();
+            peer = new Peer(id);
+            peer.on('open', (id) => {
+                isHost = true;
+                infoDisp.innerText = "あなたのID: " + id;
+            });
+            peer.on('connection', conn => {
+                conn.on('open', () => {
+                    connections[conn.peer] = conn;
+                    let worldData = [];
+                    blocks.forEach((v, k) => { const parts = k.split(','); worldData.push({x:parseInt(parts[0]), y:parseInt(parts[1]), z:parseInt(parts[2]), type:v.type}); });
+                    conn.send({ type: 'world', world: worldData });
+                });
+                conn.on('data', data => handleNetworkData(data, conn.peer));
+            });
+        } else {
+            const targetId = document.getElementById("hostIdInput").value;
+            peer = new Peer();
+            infoDisp.innerText = "接続中...";
+            peer.on('open', () => {
+                const conn = peer.connect(targetId);
+                conn.on('open', () => {
+                    connections[targetId] = conn;
+                    infoDisp.innerText = "参加成功！";
+                });
+                conn.on('data', data => handleNetworkData(data, targetId));
+            });
+        }
+    } else {
+        infoDisp.innerText = "通信機能エラー(シングルプレイ中)";
+    }
+
+    function broadcast(data) {
+        if (!peer) return;
+        if (isHost) {
+            for (let id in connections) connections[id].send(data);
+        } else {
+            Object.values(connections)[0]?.send(data);
+        }
+    }
+
+    function handleNetworkData(data, senderId) {
+        if (data.type === 'world') {
+            data.world.forEach(b => addBlock(b.x, b.y, b.z, b.type, false));
+        } else if (data.type === 'add') {
+            addBlock(data.x, data.y, data.z, data.blockType, false);
+            if (isHost) broadcast(data);
+        } else if (data.type === 'break') {
+            removeBlock(data.x, data.y, data.z, false);
+            if (isHost) broadcast(data);
+        }
+    }
+
+    // アニメーションループ
+    function animate() {
+        requestAnimationFrame(animate);
+        if (isLocked) {
+            curYaw += (targetYaw - curYaw) * 0.2;
+            curPitch += (targetPitch - curPitch) * 0.2;
+            camera.rotation.set(curPitch, curYaw, 0, 'YXZ');
+
+            const dt = 0.016;
+            const move = new THREE.Vector3();
+            if (keys["KeyW"]) move.z -= 1; if (keys["KeyS"]) move.z += 1;
+            if (keys["KeyA"]) move.x -= 1; if (keys["KeyD"]) move.x += 1;
+            move.applyAxisAngle(new THREE.Vector3(0,1,0), curYaw).normalize().multiplyScalar(MOVE_SPEED * dt);
+            
+            if(!blocks.get(Math.floor(camera.position.x + move.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z))) camera.position.x += move.x;
+            if(!blocks.get(Math.floor(camera.position.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z + move.z))) camera.position.z += move.z;
+
+            vy += GRAVITY * dt;
+            py += vy * dt;
