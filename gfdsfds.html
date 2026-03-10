@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Multiplayer & Smooth</title>
+<title>Mini Craft - Fixed UI Transition</title>
 <style>
     body { margin: 0; overflow: hidden; background: #87ceeb; font-family: sans-serif; user-select: none; }
     
@@ -23,7 +23,7 @@
     #serverInfo { position: absolute; top: 20px; left: 20px; font-size: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; pointer-events: auto; }
     
     /* 持ち物バー */
-    #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; }
+    #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; pointer-events: auto; }
     .slot { width: 50px; height: 50px; border: 2px solid #555; margin: 0 3px; display: flex; justify-content: center; align-items: center; }
     .slot.active { border-color: white; background: rgba(255,255,255,0.3); }
 </style>
@@ -34,7 +34,7 @@
     <div id="menuContent">
         <h1>Mini Craft</h1>
         <input id="userName" type="text" placeholder="あなたの名前">
-        <button class="btn btn-host" onclick="startGame('host')">ホストとして世界を作る</button>
+        <button class="btn btn-host" onclick="startGame('host')">世界を作成して開始</button>
         <hr style="border-color:#555; margin: 20px 0;">
         <input id="hostIdInput" type="text" placeholder="参加用4桁のIDを入力">
         <button class="btn btn-join" onclick="startGame('join')">友達の世界に参加する</button>
@@ -42,7 +42,7 @@
 </div>
 
 <div id="gameUI">
-    <div id="serverInfo">ステータス: 準備中...</div>
+    <div id="serverInfo">読み込み中...</div>
     <div id="crosshair">+</div>
     <div id="hotbar">
         <div class="slot active" id="s0"><div style="width:30px;height:30px;background:#4caf50"></div></div>
@@ -57,38 +57,50 @@
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- ゲームの基本設定 ---
-const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
-let blocks = new Map(), selected = 0;
+// --- グローバル変数 ---
+let scene, camera, renderer, raycaster;
+let blocks = new Map();
+let selected = 0;
 const items = ["grass", "dirt", "stone", "water", "bedrock"];
+const mats = {};
 
-// 視点の補間用変数（カクつき防止）
+const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
+let py = 5, vy = 0;
 let targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
 let isLocked = false;
+const keys = {};
 
-// 通信用変数
 let peer = null, isHost = false, connections = {};
-let myName = "Player";
 
-// --- Three.js の準備 ---
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x87ceeb);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setSize(window.innerWidth, window.innerHeight);
-document.body.appendChild(renderer.domElement);
+// --- ゲーム開始（ボタンが押されたらここが呼ばれる） ---
+function startGame(mode) {
+    try {
+        // 1. 【最優先】何があってもまずは画面を切り替える
+        document.getElementById("netUI").style.display = "none";
+        document.getElementById("gameUI").style.display = "block";
 
-const light = new THREE.AmbientLight(0xffffff, 0.8);
-scene.add(light);
-const sun = new THREE.DirectionalLight(0xffffff, 0.5);
-sun.position.set(5, 15, 7);
-scene.add(sun);
+        // 2. Three.js が読み込めているかチェック
+        if (typeof THREE === 'undefined') {
+            alert("エラー: 3Dライブラリ(Three.js)が読み込めませんでした。ネット接続を確認してください。");
+            return;
+        }
 
-const mats = {
-    grass: new THREE.MeshLambertMaterial({ color: 0x4caf50 }),
-    dirt: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
-    stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
-    water: new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 }),
-    bedrock: new THREE.MeshLambertMaterial({ color: 0x333333 })
-};
-const boxGeo = new THREE.BoxGeometry(1, 1,
+        // 3. 少しだけ遅らせてから重い3D処理を開始する（画面のフリーズを防ぐため）
+        setTimeout(() => {
+            init3D();
+            generateWorld();
+            initControls();
+            initNetwork(mode);
+            animate();
+        }, 50);
+
+    } catch (e) {
+        alert("エラーが発生しました: " + e.message);
+        console.error(e);
+    }
+}
+
+// --- 3Dエンジンの初期化 ---
+function init3D() {
+    scene = new THREE.Scene();
+    scene.
