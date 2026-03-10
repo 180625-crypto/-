@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Blue Screen Fix</title>
+<title>Mini Craft - Lock & View Fix</title>
 <style>
     body { margin: 0; overflow: hidden; background: #87ceeb; font-family: sans-serif; user-select: none; }
     
@@ -19,10 +19,13 @@
     #gameUI { position: fixed; inset: 0; pointer-events: none; display: none; }
     #crosshair { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: white; font-size: 24px; text-shadow: 1px 1px 2px black; }
     #serverInfo { position: absolute; top: 20px; left: 20px; font-size: 20px; color: white; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 5px; pointer-events: auto; }
-    #clickToStart { position: absolute; top: 120px; left: 20px; font-size: 18px; color: yellow; font-weight: bold; text-shadow: 1px 1px 2px black; }
     
     /* 体力ゲージのUI */
     #stats { position: absolute; top: 70px; left: 20px; font-size: 28px; text-shadow: 2px 2px 0 #000; pointer-events: none; }
+
+    /* ★確実な画面ロック用の巨大スタート画面 */
+    #clickToStart { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; justify-content: center; align-items: center; z-index: 9998; cursor: pointer; pointer-events: auto; }
+    #startMsg { background: white; color: black; padding: 20px 40px; border-radius: 10px; font-size: 24px; font-weight: bold; text-align: center; box-shadow: 0 4px 10px rgba(0,0,0,0.5); }
 
     /* 持ち物バー */
     #hotbar { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; background: rgba(0,0,0,0.6); padding: 5px; border-radius: 5px; }
@@ -42,231 +45,4 @@ function onStartClicked(mode) {
             info.innerText = "読み込み完了！世界を構築中...";
             setTimeout(() => startCoreGame(mode), 100);
         }, () => {
-            info.innerText = "通信機能がブロックされました（シングルプレイで開始します）";
-            setTimeout(() => startCoreGame(mode), 100);
-        });
-    }, () => {
-        info.innerHTML = "<span style='color:#ff4b4b;'>エラー: 3Dライブラリがブロックされました。</span>";
-    });
-}
-
-function loadScript(url, onSuccess, onError) {
-    const script = document.createElement('script');
-    script.src = url;
-    script.onload = onSuccess;
-    script.onerror = onError;
-    document.head.appendChild(script);
-}
-
-function startCoreGame(mode) {
-    let scene, camera, renderer, raycaster;
-    let blocks = new Map(), selected = 0;
-    const items = ["grass", "dirt", "stone", "water", "bedrock"];
-    const mats = {};
-
-    const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6;
-    let py = 10, vy = 0, targetYaw = 0, targetPitch = 0, curYaw = 0, curPitch = 0;
-    let isLocked = false;
-    const keys = {};
-    let peer = null, isHost = false, connections = {};
-    
-    let hp = 5;
-
-    // Three.js初期化
-    scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87ceeb); // 水色（空の色）
-    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    
-    // ★カメラの初期位置をしっかり上空にセット（水色画面の防止）
-    camera.position.set(0, py, 0); 
-    
-    renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    document.body.appendChild(renderer.domElement);
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.8));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.5);
-    sun.position.set(5, 15, 7);
-    scene.add(sun);
-
-    mats.grass = new THREE.MeshLambertMaterial({ color: 0x4caf50 });
-    mats.dirt = new THREE.MeshLambertMaterial({ color: 0x8b5a2b });
-    mats.stone = new THREE.MeshLambertMaterial({ color: 0x888888 });
-    mats.water = new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 });
-    mats.bedrock = new THREE.MeshLambertMaterial({ color: 0x333333 });
-    raycaster = new THREE.Raycaster();
-
-    function addBlock(x, y, z, type, isLocal = true) {
-        const k = x+","+y+","+z;
-        if (blocks.has(k)) {
-            if (blocks.get(k).type === 'water' && type !== 'water') removeBlock(x, y, z, false);
-            else return;
-        }
-        const mesh = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mats[type]);
-        mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
-        scene.add(mesh);
-        blocks.set(k, { mesh, type });
-        if (isLocal) broadcast({ type: 'add', x, y, z, blockType: type });
-    }
-
-    function removeBlock(x, y, z, isLocal = true) {
-        const k = x+","+y+","+z;
-        if (!blocks.has(k) || blocks.get(k).type === 'water' || y === -5) return;
-        scene.remove(blocks.get(k).mesh);
-        blocks.delete(k);
-        if (isLocal) broadcast({ type: 'break', x, y, z });
-    }
-
-    function updateHP() {
-        let hearts = "";
-        for(let i=0; i<5; i++) hearts += (i < hp) ? "❤️" : "🖤";
-        document.getElementById("hpUI").innerText = hearts;
-        
-        if (hp <= 0) {
-            hp = 5;
-            py = 10; // 上空から復活
-            vy = 0;
-            camera.position.set(0, py, 0);
-            updateHP();
-        }
-    }
-    updateHP(); 
-
-    // 地面を5段生成
-    for(let x=-10; x<=10; x++) {
-        for(let z=-10; z<=10; z++) {
-            addBlock(x, -1, z, "grass", false);
-            addBlock(x, -2, z, "dirt", false);
-            addBlock(x, -3, z, "dirt", false);
-            addBlock(x, -4, z, "stone", false);
-            addBlock(x, -5, z, "bedrock", false);
-        }
-    }
-
-    window.addEventListener('keydown', e => {
-        keys[e.code] = true;
-        if (e.code.startsWith("Digit")) {
-            document.getElementById("s"+selected).classList.remove("active");
-            selected = Math.min(parseInt(e.code.slice(-1)) - 1, 4);
-            document.getElementById("s"+selected).classList.add("active");
-        }
-    });
-    window.addEventListener('keyup', e => keys[e.code] = false);
-
-    renderer.domElement.addEventListener('mousedown', () => renderer.domElement.requestPointerLock());
-    
-    document.addEventListener('pointerlockchange', () => {
-        isLocked = document.pointerLockElement === renderer.domElement;
-        // ロックされたら「クリックして開始」の文字を消す
-        document.getElementById("clickToStart").style.display = isLocked ? "none" : "block";
-    });
-
-    window.addEventListener('mousemove', e => {
-        if (!isLocked) return;
-        targetYaw -= e.movementX * 0.002;
-        targetPitch = Math.max(-1.5, Math.min(1.5, targetPitch - e.movementY * 0.002));
-    });
-
-    window.addEventListener('mousedown', e => {
-        if (!isLocked) return;
-        raycaster.setFromCamera({x:0, y:0}, camera);
-        const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
-        if (hits.length > 0 && hits[0].distance < 8) {
-            const pos = hits[0].object.position;
-            if (e.button === 0) removeBlock(Math.floor(pos.x), Math.floor(pos.y), Math.floor(pos.z));
-            if (e.button === 2) {
-                const n = hits[0].face.normal;
-                addBlock(Math.floor(pos.x + n.x), Math.floor(pos.y + n.y), Math.floor(pos.z + n.z), items[selected]);
-            }
-        }
-    });
-
-    const infoDisp = document.getElementById("serverInfo");
-    if (typeof Peer !== 'undefined') {
-        if (mode === 'host') {
-            const id = Math.floor(1000 + Math.random() * 9000).toString();
-            peer = new Peer(id);
-            peer.on('open', (id) => { isHost = true; infoDisp.innerText = "あなたのID: " + id; });
-            peer.on('connection', conn => {
-                conn.on('open', () => {
-                    connections[conn.peer] = conn;
-                    let worldData = [];
-                    blocks.forEach((v, k) => { const parts = k.split(','); worldData.push({x:parseInt(parts[0]), y:parseInt(parts[1]), z:parseInt(parts[2]), type:v.type}); });
-                    conn.send({ type: 'world', world: worldData });
-                });
-                conn.on('data', data => handleNetworkData(data, conn.peer));
-            });
-        } else {
-            const targetId = document.getElementById("hostIdInput").value;
-            peer = new Peer();
-            infoDisp.innerText = "接続中...";
-            peer.on('open', () => {
-                const conn = peer.connect(targetId);
-                conn.on('open', () => { connections[targetId] = conn; infoDisp.innerText = "参加成功！"; });
-                conn.on('data', data => handleNetworkData(data, targetId));
-            });
-        }
-    }
-
-    function broadcast(data) {
-        if (!peer) return;
-        if (isHost) { for (let id in connections) connections[id].send(data); }
-        else { Object.values(connections)[0]?.send(data); }
-    }
-
-    function handleNetworkData(data, senderId) {
-        if (data.type === 'world') data.world.forEach(b => addBlock(b.x, b.y, b.z, b.type, false));
-        else if (data.type === 'add') { addBlock(data.x, data.y, data.z, data.blockType, false); if (isHost) broadcast(data); }
-        else if (data.type === 'break') { removeBlock(data.x, data.y, data.z, false); if (isHost) broadcast(data); }
-    }
-
-    function animate() {
-        requestAnimationFrame(animate);
-        if (isLocked) {
-            curYaw += (targetYaw - curYaw) * 0.5;
-            curPitch += (targetPitch - curPitch) * 0.5;
-            camera.rotation.set(curPitch, curYaw, 0, 'YXZ');
-
-            const dt = 0.016, move = new THREE.Vector3();
-            if (keys["KeyW"]) move.z -= 1; if (keys["KeyS"]) move.z += 1;
-            if (keys["KeyA"]) move.x -= 1; if (keys["KeyD"]) move.x += 1;
-            move.applyAxisAngle(new THREE.Vector3(0,1,0), curYaw).normalize().multiplyScalar(MOVE_SPEED * dt);
-            
-            const checkX = blocks.get(Math.floor(camera.position.x + move.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z));
-            if(!checkX || checkX.type === 'water') camera.position.x += move.x;
-            
-            const checkZ = blocks.get(Math.floor(camera.position.x)+","+Math.floor(py-PLAYER_H+0.1)+","+Math.floor(camera.position.z + move.z));
-            if(!checkZ || checkZ.type === 'water') camera.position.z += move.z;
-
-            vy += GRAVITY * dt; py += vy * dt;
-            const ground = blocks.get(Math.floor(camera.position.x)+","+Math.floor(py-PLAYER_H)+","+Math.floor(camera.position.z));
-            
-            if (ground && ground.type !== 'water') {
-                if (vy < -14) {
-                    hp--;
-                    updateHP();
-                }
-                py = Math.floor(py-PLAYER_H) + 1 + PLAYER_H;
-                vy = keys["Space"] ? JUMP : 0;
-            }
-            camera.position.y = py;
-            
-            // ★奈落（世界の外）に落ちた時の対策
-            if (py < -15) {
-                hp = 0; // 強制的に体力を0にしてリスポーンさせる
-                updateHP();
-            }
-        }
-        renderer.render(scene, camera);
-    }
-    animate();
-}
-</script>
-</head>
-<body>
-
-<div id="netUI">
-    <div id="menuContent">
-        <h1>Mini Craft</h1>
-        <input id="userName" type="text" placeholder="あなたの名前">
-        <button class="btn btn-host" onclick="onStartClicked
+            info.innerText = "通信機能がブロックされました（シングルプレイ）
