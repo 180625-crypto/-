@@ -1,16 +1,17 @@
+
 <!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - NameTag Edition</title>
+<title>Mini Craft - Fixed Edition</title>
 <style>
 body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
-#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:24px;pointer-events:none;z-index:10;}
-#netUI{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;justify-content:center;align-items:center;z-index:200;color:white;}
-#menuContent{background:#222;padding:30px;border-radius:10px;text-align:center;width:320px;box-shadow: 0 0 20px rgba(0,0,0,0.5);}
-.large-btn{font-size:18px;padding:10px;margin:10px 0;cursor:pointer;background:#4caf50;color:white;border:none;width:100%;border-radius:5px;}
-.large-btn:hover{background:#45a049;}
-input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;font-size:16px;}
+#crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:24px;pointer-events:none;z-index:10;display:none;}
+/* UIを最前面に */
+#netUI{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;justify-content:center;align-items:center;z-index:1000;color:white;}
+#menuContent{background:#222;padding:30px;border-radius:10px;text-align:center;width:320px;pointer-events: auto;}
+.large-btn{font-size:18px;padding:12px;margin:10px 0;cursor:pointer;background:#4caf50;color:white;border:none;width:100%;border-radius:5px;}
+input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;font-size:16px;color: black;}
 #gameUI{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:none;z-index:100;}
 #hotbar{display:flex;background:rgba(0,0,0,0.5);padding:2px;border:2px solid #333;}
 .slot{width:45px;height:45px;border:2px solid #555;display:flex;justify-content:center;align-items:center;}
@@ -25,7 +26,7 @@ input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;fo
     <h1 style="color:#4caf50">Mini Craft</h1>
     <input id="userNameInput" type="text" placeholder="名前を入力してください" maxlength="10">
     <button class="large-btn" onclick="initGame('host')">ホストとして開始</button>
-    <hr style="margin:20px 0; border:0; border-top:1px solid #444;">
+    <div style="margin:10px; color:#aaa; font-size:12px;">または</div>
     <input id="hostIdInput" type="text" placeholder="参加用4桁IDを入力">
     <button class="large-btn" style="background:#2196f3" onclick="initGame('join')">参加する</button>
   </div>
@@ -46,19 +47,18 @@ input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;fo
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- 定数 & 変数 ---
+// --- 基本設定 ---
 const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6, REACH = 8;
 let selectedSlot = 0, blocks = new Map(), peer, isHost = false, connections = {};
-let myName = "Player";
+let myName = "Player", myNameTag;
 const inventory = ["grass", "dirt", "stone", "water", "bedrock"];
 
-// --- Three.js セットアップ ---
+// --- Three.js 準備 ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
@@ -74,35 +74,29 @@ const mats = {
   bedrock: new THREE.MeshLambertMaterial({ color: 0x333333 })
 };
 const boxGeo = new THREE.BoxGeometry(1, 1, 1);
-
 const selectionCube = new THREE.LineSegments(
   new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01)),
   new THREE.LineBasicMaterial({ color: 0x000000 })
 );
 scene.add(selectionCube);
 
-// --- ネームタグ作成関数 ---
+// --- システム関数 ---
 function createNameTag(name) {
   const canvas = document.createElement('canvas');
   const ctx = canvas.getContext('2d');
   canvas.width = 256; canvas.height = 64;
   ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
   ctx.fillRect(0, 0, 256, 64);
-  ctx.font = 'bold 32px sans-serif';
+  ctx.font = 'bold 36px sans-serif';
   ctx.fillStyle = 'white';
   ctx.textAlign = 'center';
   ctx.fillText(name, 128, 45);
-  
   const texture = new THREE.CanvasTexture(canvas);
-  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
-  const sprite = new THREE.Sprite(spriteMat);
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture }));
   sprite.scale.set(2, 0.5, 1);
   return sprite;
 }
 
-let myNameTag;
-
-// --- ブロック操作 ---
 function addBlock(x, y, z, type, send=true) {
   const k = `${x},${y},${z}`;
   const existing = blocks.get(k);
@@ -114,57 +108,131 @@ function addBlock(x, y, z, type, send=true) {
   mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
   scene.add(mesh);
   blocks.set(k, { mesh, type });
-  if (send && peer) {
-    const d = { type: "add", x, y, z, blockType: type };
-    isHost ? sendToAll(d) : sendToHost(d);
-  }
+  if (send && isHost) sendToAll({ type: "add", x, y, z, blockType: type });
 }
 
 function removeBlock(x, y, z, send=true) {
   const k = `${x},${y},${z}`;
-  if (!blocks.has(k)) return;
-  const block = blocks.get(k);
-  if (block.type === 'water' || y === -3) return;
-  scene.remove(block.mesh);
+  if (!blocks.has(k) || blocks.get(k).type === 'water' || y === -3) return;
+  scene.remove(blocks.get(k).mesh);
   blocks.delete(k);
-  if (send && peer) {
-    const d = { type: "break", x, y, z };
-    isHost ? sendToAll(d) : sendToHost(d);
-  }
+  if (send && isHost) sendToAll({ type: "break", x, y, z });
 }
 
 function checkCollision(x, y, z) {
-  const ix = Math.floor(x), iy = Math.floor(y - PLAYER_H + 0.1), iz = Math.floor(z);
-  const b = blocks.get(`${ix},${iy},${iz}`);
+  const b = blocks.get(`${Math.floor(x)},${Math.floor(y - PLAYER_H + 0.1)},${Math.floor(z)}`);
   return b && b.type !== 'water';
 }
 
-// --- 初期化ロジック ---
+// --- 初期化 ---
 function initGame(mode) {
-  const nameInput = document.getElementById("userNameInput").value;
-  myName = nameInput || "Player";
+  myName = document.getElementById("userNameInput").value || "Player";
+  document.getElementById("netUI").style.display = "none";
+  document.getElementById("gameUI").style.display = "block";
+  document.getElementById("crosshair").style.display = "block";
   
   if (mode === 'host') {
-    startHost();
-  } else {
-    const id = document.getElementById("hostIdInput").value;
-    if(!id) { alert("IDを入力してください"); return; }
-    joinHost(id);
+    isHost = true;
+    for(let x=-10; x<=10; x++) for(let z=-10; z<=10; z++) {
+      addBlock(x, -1, z, "grass", false);
+      addBlock(x, -2, z, "dirt", false);
+      addBlock(x, -3, z, "bedrock", false);
+    }
   }
+  setupGame();
 }
 
-function startHost() {
-  const id = Math.floor(1000 + Math.random() * 9000).toString();
-  peer = new Peer(id);
-  peer.on('open', (id) => {
-    isHost = true; alert("あなたのサーバーID: " + id);
-    setupGame();
-    for(let x=-10; x<=10; x++) {
-      for(let z=-10; z<=10; z++) {
-        addBlock(x, -1, z, "grass", false);
-        addBlock(x, -2, z, "dirt", false);
-        addBlock(x, -3, z, "bedrock", false);
+// --- ゲームメイン ---
+let py = 5, vy = 0, yaw = 0, pitch = 0, locked = false;
+const keys = {}, raycaster = new THREE.Raycaster();
+
+function setupGame() {
+  myNameTag = createNameTag(myName);
+  scene.add(myNameTag);
+
+  window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if(e.code.startsWith("Digit")) {
+      document.getElementById("slot"+selectedSlot).classList.remove("active");
+      selectedSlot = Math.min(parseInt(e.code.slice(-1)) - 1, 4);
+      document.getElementById("slot"+selectedSlot).classList.add("active");
+    }
+  });
+  window.addEventListener('keyup', e => keys[e.code] = false);
+
+  renderer.domElement.addEventListener('click', () => {
+    renderer.domElement.requestPointerLock();
+  });
+
+  document.addEventListener('pointerlockchange', () => {
+    locked = document.pointerLockElement === renderer.domElement;
+  });
+
+  window.addEventListener('mousemove', e => {
+    if(!locked) return;
+    yaw -= e.movementX * 0.002;
+    pitch = Math.max(-1.5, Math.min(1.5, pitch - e.movementY * 0.002));
+  });
+
+  window.addEventListener('mousedown', e => {
+    if(!locked) return;
+    raycaster.setFromCamera({x:0, y:0}, camera);
+    const hits = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
+    if(hits.length > 0 && hits[0].distance < REACH) {
+      const bPos = hits[0].object.position;
+      if(e.button === 0) removeBlock(Math.floor(bPos.x), Math.floor(bPos.y), Math.floor(bPos.z));
+      if(e.button === 2) {
+        const p = bPos.clone().add(hits[0].face.normal);
+        addBlock(Math.floor(p.x), Math.floor(p.y), Math.floor(p.z), inventory[selectedSlot]);
       }
     }
   });
-  peer.on('connection
+
+  animate();
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  const dt = 0.016;
+  if(locked) {
+    camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    const move = new THREE.Vector3();
+    if(keys["KeyW"]) move.z -= 1; if(keys["KeyS"]) move.z += 1;
+    if(keys["KeyA"]) move.x -= 1; if(keys["KeyD"]) move.x += 1;
+    move.applyAxisAngle(new THREE.Vector3(0,1,0), yaw).normalize().multiplyScalar(MOVE_SPEED * dt);
+    
+    if(!checkCollision(camera.position.x + move.x, py, camera.position.z)) camera.position.x += move.x;
+    if(!checkCollision(camera.position.x, py, camera.position.z + move.z)) camera.position.z += move.z;
+
+    vy += GRAVITY * dt;
+    py += vy * dt;
+    if(checkCollision(camera.position.x, py, camera.position.z)) {
+      py = Math.floor(py - PLAYER_H + 0.1) + 1 + PLAYER_H;
+      vy = keys["Space"] ? JUMP : 0;
+    }
+    camera.position.y = py;
+
+    raycaster.setFromCamera({x:0, y:0}, camera);
+    const h = raycaster.intersectObjects(Array.from(blocks.values()).map(b => b.mesh));
+    if(h.length > 0 && h[0].distance < REACH) {
+      selectionCube.position.copy(h[0].object.position);
+      selectionCube.visible = true;
+    } else {
+      selectionCube.visible = false;
+    }
+  }
+
+  if(myNameTag) {
+    myNameTag.position.set(camera.position.x, camera.position.y + 0.8, camera.position.z);
+  }
+  renderer.render(scene, camera);
+}
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
