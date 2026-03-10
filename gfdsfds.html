@@ -2,28 +2,32 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Ultimate Smooth</title>
+<title>Mini Craft - NameTag Edition</title>
 <style>
 body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
 #crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:24px;pointer-events:none;z-index:10;}
-#netUI{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.8);display:flex;justify-content:center;align-items:center;z-index:200;color:white;}
-#menuContent{background:#222;padding:30px;border-radius:10px;text-align:center;width:320px;}
-.large-btn{font-size:18px;padding:10px;margin:5px 0;cursor:pointer;background:#4caf50;color:white;border:none;width:100%;border-radius:5px;}
+#netUI{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.9);display:flex;justify-content:center;align-items:center;z-index:200;color:white;}
+#menuContent{background:#222;padding:30px;border-radius:10px;text-align:center;width:320px;box-shadow: 0 0 20px rgba(0,0,0,0.5);}
+.large-btn{font-size:18px;padding:10px;margin:10px 0;cursor:pointer;background:#4caf50;color:white;border:none;width:100%;border-radius:5px;}
+.large-btn:hover{background:#45a049;}
+input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;font-size:16px;}
 #gameUI{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);display:none;z-index:100;}
 #hotbar{display:flex;background:rgba(0,0,0,0.5);padding:2px;border:2px solid #333;}
-.slot{width:40px;height:40px;border:2px solid #555;display:flex;justify-content:center;align-items:center;}
-.slot.active{border-color:white;background:rgba(255,255,255,0.3);}
-.icon{width:20px;height:20px;}
+.slot{width:45px;height:45px;border:2px solid #555;display:flex;justify-content:center;align-items:center;}
+.slot.active{border-color:white;background:rgba(255,255,255,0.4);}
+.icon{width:25px;height:25px;}
 </style>
 </head>
 <body>
 
 <div id="netUI">
   <div id="menuContent">
-    <h1 style="color:#4caf50">Mini Craft Pro</h1>
-    <button class="large-btn" onclick="startHost()">ホストとして開始</button>
-    <input id="hostIdInput" placeholder="4桁のIDを入力" style="padding:10px;width:80%;margin-top:10px;">
-    <button class="large-btn" style="background:#2196f3" onclick="joinHost()">参加する</button>
+    <h1 style="color:#4caf50">Mini Craft</h1>
+    <input id="userNameInput" type="text" placeholder="名前を入力してください" maxlength="10">
+    <button class="large-btn" onclick="initGame('host')">ホストとして開始</button>
+    <hr style="margin:20px 0; border:0; border-top:1px solid #444;">
+    <input id="hostIdInput" type="text" placeholder="参加用4桁IDを入力">
+    <button class="large-btn" style="background:#2196f3" onclick="initGame('join')">参加する</button>
   </div>
 </div>
 
@@ -34,7 +38,7 @@ body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
     <div class="slot" id="slot1"><div class="icon" style="background:#8b5a2b"></div></div>
     <div class="slot" id="slot2"><div class="icon" style="background:#888888"></div></div>
     <div class="slot" id="slot3"><div class="icon" style="background:#2196f3;opacity:0.6"></div></div>
-    <div class="slot" id="slot4"><div class="icon" style="background:#444"></div></div>
+    <div class="slot" id="slot4"><div class="icon" style="background:#333"></div></div>
   </div>
 </div>
 
@@ -42,9 +46,10 @@ body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
 <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- 定数 ---
+// --- 定数 & 変数 ---
 const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6, REACH = 8;
 let selectedSlot = 0, blocks = new Map(), peer, isHost = false, connections = {};
+let myName = "Player";
 const inventory = ["grass", "dirt", "stone", "water", "bedrock"];
 
 // --- Three.js セットアップ ---
@@ -56,7 +61,6 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 document.body.appendChild(renderer.domElement);
 
-// ライティング
 scene.add(new THREE.AmbientLight(0xffffff, 0.7));
 const sun = new THREE.DirectionalLight(0xffffff, 0.8);
 sun.position.set(5, 15, 7);
@@ -67,4 +71,100 @@ const mats = {
   dirt: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
   stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
   water: new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 }),
-  bedrock: new THREE.MeshLambertMaterial({ color:
+  bedrock: new THREE.MeshLambertMaterial({ color: 0x333333 })
+};
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+const selectionCube = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01)),
+  new THREE.LineBasicMaterial({ color: 0x000000 })
+);
+scene.add(selectionCube);
+
+// --- ネームタグ作成関数 ---
+function createNameTag(name) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = 256; canvas.height = 64;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+  ctx.fillRect(0, 0, 256, 64);
+  ctx.font = 'bold 32px sans-serif';
+  ctx.fillStyle = 'white';
+  ctx.textAlign = 'center';
+  ctx.fillText(name, 128, 45);
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(2, 0.5, 1);
+  return sprite;
+}
+
+let myNameTag;
+
+// --- ブロック操作 ---
+function addBlock(x, y, z, type, send=true) {
+  const k = `${x},${y},${z}`;
+  const existing = blocks.get(k);
+  if (existing) {
+    if (existing.type === 'water' && type !== 'water') removeBlock(x, y, z, false);
+    else return;
+  }
+  const mesh = new THREE.Mesh(boxGeo, mats[type]);
+  mesh.position.set(x + 0.5, y + 0.5, z + 0.5);
+  scene.add(mesh);
+  blocks.set(k, { mesh, type });
+  if (send && peer) {
+    const d = { type: "add", x, y, z, blockType: type };
+    isHost ? sendToAll(d) : sendToHost(d);
+  }
+}
+
+function removeBlock(x, y, z, send=true) {
+  const k = `${x},${y},${z}`;
+  if (!blocks.has(k)) return;
+  const block = blocks.get(k);
+  if (block.type === 'water' || y === -3) return;
+  scene.remove(block.mesh);
+  blocks.delete(k);
+  if (send && peer) {
+    const d = { type: "break", x, y, z };
+    isHost ? sendToAll(d) : sendToHost(d);
+  }
+}
+
+function checkCollision(x, y, z) {
+  const ix = Math.floor(x), iy = Math.floor(y - PLAYER_H + 0.1), iz = Math.floor(z);
+  const b = blocks.get(`${ix},${iy},${iz}`);
+  return b && b.type !== 'water';
+}
+
+// --- 初期化ロジック ---
+function initGame(mode) {
+  const nameInput = document.getElementById("userNameInput").value;
+  myName = nameInput || "Player";
+  
+  if (mode === 'host') {
+    startHost();
+  } else {
+    const id = document.getElementById("hostIdInput").value;
+    if(!id) { alert("IDを入力してください"); return; }
+    joinHost(id);
+  }
+}
+
+function startHost() {
+  const id = Math.floor(1000 + Math.random() * 9000).toString();
+  peer = new Peer(id);
+  peer.on('open', (id) => {
+    isHost = true; alert("あなたのサーバーID: " + id);
+    setupGame();
+    for(let x=-10; x<=10; x++) {
+      for(let z=-10; z<=10; z++) {
+        addBlock(x, -1, z, "grass", false);
+        addBlock(x, -2, z, "dirt", false);
+        addBlock(x, -3, z, "bedrock", false);
+      }
+    }
+  });
+  peer.on('connection
