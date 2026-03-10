@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Mini Craft - Smooth Motion</title>
+<title>Mini Craft - Stable Edition</title>
 <style>
 body{margin:0;overflow:hidden;background:#87ceeb;font-family:sans-serif;}
 #crosshair{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:white;font-size:24px;pointer-events:none;z-index:10;display:none;}
@@ -23,7 +23,10 @@ input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;fo
   <div id="menuContent">
     <h1 style="color:#4caf50">Mini Craft</h1>
     <input id="userNameInput" type="text" placeholder="名前を入力" maxlength="10">
-    <button class="large-btn" onclick="initGame()">ゲーム開始</button>
+    <button class="large-btn" onclick="initGame('host')">ホストとして開始</button>
+    <div style="margin:5px; color:#666;">または</div>
+    <input id="hostIdInput" type="text" placeholder="4桁IDを入力">
+    <button class="large-btn" style="background:#2196f3" onclick="initGame('join')">参加する</button>
   </div>
 </div>
 
@@ -39,20 +42,46 @@ input{padding:12px;width:90%;margin-bottom:10px;border-radius:5px;border:none;fo
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160/build/three.min.js"></script>
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 
 <script>
-// --- 基本設定 ---
+// --- 設定 ---
 const PLAYER_H = 1.6, GRAVITY = -24, JUMP = 8, MOVE_SPEED = 6, REACH = 8;
-let selectedSlot = 0, blocks = new Map();
+let selectedSlot = 0, blocks = new Map(), peer = null, isHost = false, connections = {};
 let myName = "Player", myNameTag;
 const inventory = ["grass", "dirt", "stone", "water", "bedrock"];
 
-// --- 視点スムージング用の変数 ---
-let targetYaw = 0, targetPitch = 0;
-let currentYaw = 0, currentPitch = 0;
-const SMOOTH_FACTOR = 0.15; // 値が小さいほど滑らか（0.1〜0.3推奨）
+// 視点スムージング
+let targetYaw = 0, targetPitch = 0, currentYaw = 0, currentPitch = 0;
+const SMOOTH_FACTOR = 0.2;
 
-// --- Three.js セットアップ ---
+// --- Three.js ---
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x87ceeb);
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
+document.body.appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+const sun = new THREE.DirectionalLight(0xffffff, 0.8);
+sun.position.set(5, 15, 7);
+scene.add(sun);
+
+const mats = {
+  grass: new THREE.MeshLambertMaterial({ color: 0x4caf50 }),
+  dirt: new THREE.MeshLambertMaterial({ color: 0x8b5a2b }),
+  stone: new THREE.MeshLambertMaterial({ color: 0x888888 }),
+  water: new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.6 }),
+  bedrock: new THREE.MeshLambertMaterial({ color: 0x333333 })
+};
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+const selectionCube = new THREE.LineSegments(
+  new THREE.EdgesGeometry(new THREE.BoxGeometry(1.01, 1.01, 1.01)),
+  new THREE.LineBasicMaterial({ color: 0x000000 })
+);
+scene.add(selectionCube);
+
+function createNameTag(name) {
+  const canvas = document
